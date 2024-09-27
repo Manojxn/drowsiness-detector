@@ -1,112 +1,63 @@
-import cv2
-import os
-from keras.models import load_model
-import numpy as np
+from scipy.spatial import distance
+from imutils import face_utils
 from pygame import mixer
-import time
+import imutils
+import dlib
+import cv2
 
 
 mixer.init()
-sound = mixer.Sound('beep-07.wav')
+mixer.music.load("beep-07.wav")
 
-face = cv2.CascadeClassifier('haar cascade files\haarcascade_frontalface_alt.xml')
-leye = cv2.CascadeClassifier('haar cascade files\haarcascade_lefteye_2splits.xml')
-reye = cv2.CascadeClassifier('haar cascade files\haarcascade_righteye_2splits.xml')
+def eye_aspect_ratio(eye):
+	A = distance.euclidean(eye[1], eye[5])
+	B = distance.euclidean(eye[2], eye[4])
+	C = distance.euclidean(eye[0], eye[3])
+	ear = (A + B) / (2.0 * C)
+	return ear 
+	
+thresh = 0.25
+frame_check = 20
+detect = dlib.get_frontal_face_detector()
+predict = dlib.shape_predictor("models copy/shape_predictor_68_face_landmarks.dat")
 
+(lStart, lEnd) = face_utils.FACIAL_LANDMARKS_68_IDXS["left_eye"]
+(rStart, rEnd) = face_utils.FACIAL_LANDMARKS_68_IDXS["right_eye"]
 
-
-lbl=['Close','Open']
-
-model = load_model('models/cnncat2.h5')
-path = os.getcwd()
-cap = cv2.VideoCapture(0)
-font = cv2.FONT_HERSHEY_COMPLEX_SMALL
-count=0
-score=0
-thicc=2
-rpred=[99]
-lpred=[99]
-
-fourcc=cv2.VideoWriter_fourcc(*'XVID') 
-op=cv2.VideoWriter('Sample_rec.mp4',fourcc,11.0,(640,480))
-
-while(True):
-    ret, frame = cap.read()
-    height,width = frame.shape[:2] 
-
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    
-    faces = face.detectMultiScale(gray,minNeighbors=5,scaleFactor=1.1,minSize=(25,25))
-    left_eye = leye.detectMultiScale(gray)
-    right_eye =  reye.detectMultiScale(gray)
-
-    cv2.rectangle(frame, (0,height-50) , (200,height) , (0,0,0) , thickness=cv2.FILLED )
-
-    for (x,y,w,h) in faces:
-        cv2.rectangle(frame, (x,y) , (x+w,y+h) , (100,100,100) , 1 )
-
-    for (x,y,w,h) in right_eye:
-        r_eye=frame[y:y+h,x:x+w]
-        count=count+1
-        r_eye = cv2.cvtColor(r_eye,cv2.COLOR_BGR2GRAY)
-        r_eye = cv2.resize(r_eye,(24,24))
-        r_eye= r_eye/255
-        r_eye=  r_eye.reshape(24,24,-1)
-        r_eye = np.expand_dims(r_eye,axis=0)
-        rpred = model.predict_classes(r_eye)
-        if(rpred[0]==1):
-            lbl='Open' 
-        if(rpred[0]==0):
-            lbl='Closed'
-        break
-
-    for (x,y,w,h) in left_eye:
-        l_eye=frame[y:y+h,x:x+w]
-        count=count+1
-        l_eye = cv2.cvtColor(l_eye,cv2.COLOR_BGR2GRAY)  
-        l_eye = cv2.resize(l_eye,(24,24))
-        l_eye= l_eye/255
-        l_eye=l_eye.reshape(24,24,-1)
-        l_eye = np.expand_dims(l_eye,axis=0)
-        lpred = model.predict_classes(l_eye)
-        if(lpred[0]==1):
-            lbl='Open'   
-        if(lpred[0]==0):
-            lbl='Closed'
-        break
-
-    if(rpred[0]==0 and lpred[0]==0):
-        score=score+1
-        cv2.putText(frame,"Closed",(10,height-20), font, 1,(255,255,255),1,cv2.LINE_AA)
-    # if(rpred[0]==1 or lpred[0]==1):
-    else:
-        score=score-1
-        cv2.putText(frame,"Open",(10,height-20), font, 1,(255,255,255),1,cv2.LINE_AA)
-    
-        
-    if(score<0):
-        score=0   
-    cv2.putText(frame,'Score:'+str(score),(100,height-20), font, 1,(255,255,255),1,cv2.LINE_AA)
-    if(score>15):
-        #person is feeling sleepy so we beep the alarm
-        cv2.imwrite(os.path.join(path,'image.jpg'),frame)
-        
-        try:
-            sound.play()
-            
-        except:  # isplaying = False
-            pass
-        if(thicc<16):
-            thicc= thicc+2
-        else:
-            thicc=thicc-2
-            if(thicc<2):
-                thicc=2
-        cv2.rectangle(frame,(0,0),(width,height),(0,0,255),thicc)
-    op.write(frame)
-    cv2.imshow('frame',frame)
-    if cv2.waitKey(1) & 0xFF == ord('q'):
-        break
-op.release()
-cap.release()
+cap=cv2.VideoCapture(0)
+flag=0
+while True:
+	ret, frame=cap.read()
+	frame = imutils.resize(frame, width=450)
+	gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+	subjects = detect(gray, 0)
+	for subject in subjects:
+		shape = predict(gray, subject)
+		shape = face_utils.shape_to_np(shape)
+		leftEye = shape[lStart:lEnd]
+		rightEye = shape[rStart:rEnd]
+		leftEAR = eye_aspect_ratio(leftEye)
+		rightEAR = eye_aspect_ratio(rightEye)
+		ear = (leftEAR + rightEAR) / 2.0
+		leftEyeHull = cv2.convexHull(leftEye)
+		rightEyeHull = cv2.convexHull(rightEye)
+		cv2.drawContours(frame, [leftEyeHull], -1, (0, 255, 0), 1)
+		cv2.drawContours(frame, [rightEyeHull], -1, (0, 255, 0), 1)
+		if ear < thresh:
+			flag += 1
+			print (flag)
+			if flag >= frame_check:
+				cv2.putText(frame, "****************ALERT!****************", (10, 30),
+					cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+				cv2.putText(frame, "****************ALERT!****************", (10,325),
+					cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+				mixer.music.play()
+				print("Drowsy")
+		else:
+			flag = 0
+	cv2.imshow("Frame", frame)
+	key = cv2.waitKey(1) & 0xFF
+	if key == ord("q"):
+		break
 cv2.destroyAllWindows()
+cap.release() 
